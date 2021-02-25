@@ -30,7 +30,6 @@ import { findCachePath } from '../utils/cache-path';
 import { colors } from '../utils/color';
 import { copyAssets } from '../utils/copy-assets';
 import { cachingDisabled } from '../utils/environment-options';
-import { mkdir, writeFile } from '../utils/fs';
 import { i18nInlineEmittedFiles } from '../utils/i18n-inlining';
 import { I18nOptions } from '../utils/i18n-options';
 import { FileInfo } from '../utils/index-file/augment-index-html';
@@ -67,6 +66,7 @@ import { normalizeExtraEntryPoints } from '../webpack/utils/helpers';
 import {
   BundleStats,
   ChunkType,
+  JsonChunkStats,
   generateBundleStats,
   statsErrorsToString,
   statsHasErrors,
@@ -702,16 +702,16 @@ export function buildWebpackBrowser(
                       }
 
                       const indexOutput = path.join(outputPath, getIndexOutputFile(options.index));
-                      await mkdir(path.dirname(indexOutput), { recursive: true });
-                      await writeFile(indexOutput, content);
+                      await fs.promises.mkdir(path.dirname(indexOutput), { recursive: true });
+                      await fs.promises.writeFile(indexOutput, content);
                     } catch (error) {
                       spinner.fail('Index html generation failed.');
 
                       return { success: false, error: mapErrorToMessage(error) };
                     }
-
-                    spinner.succeed('Index html generation complete.');
                   }
+
+                  spinner.succeed('Index html generation complete.');
                 }
 
                 if (options.serviceWorker) {
@@ -730,9 +730,9 @@ export function buildWebpackBrowser(
 
                       return { success: false, error: mapErrorToMessage(error) };
                     }
-
-                    spinner.succeed('Service worker generation complete.');
                   }
+
+                  spinner.succeed('Service worker generation complete.');
                 }
               }
 
@@ -782,10 +782,9 @@ function assertNever(input: never): never {
   throw new Error(`Unexpected call to assertNever() with input: ${JSON.stringify(input, null /* replacer */, 4 /* tabSize */)}`);
 }
 
-type ArrayElement<A> = A extends ReadonlyArray<infer T> ? T : never;
 function generateBundleInfoStats(
   bundle: ProcessBundleFile,
-  chunk: ArrayElement<webpack.Stats.ToJsonOutput['chunks']> | undefined,
+  chunk: JsonChunkStats | undefined,
   chunkType: ChunkType,
 ): BundleStats {
   return generateBundleStats(

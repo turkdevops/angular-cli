@@ -7,12 +7,14 @@
  */
 import { CompilerHost, CompilerOptions, readConfiguration } from '@angular/compiler-cli';
 import { NgtscProgram } from '@angular/compiler-cli/src/ngtsc/program';
+import { createHash } from 'crypto';
 import * as path from 'path';
 import * as ts from 'typescript';
 import {
   Compiler,
   ContextReplacementPlugin,
   NormalModuleReplacementPlugin,
+  WebpackFourCompiler,
   compilation,
 } from 'webpack';
 import { NgccProcessor } from '../ngcc_processor';
@@ -31,8 +33,8 @@ import {
   augmentProgramWithVersioning,
 } from './host';
 import { externalizePath, normalizePath } from './paths';
-import { AngularPluginSymbol, FileEmitter } from './symbol';
-import { createWebpackSystem } from './system';
+import { AngularPluginSymbol, EmitFileResult, FileEmitter } from './symbol';
+import { InputFileSystemSync, createWebpackSystem } from './system';
 import { createAotTransformers, createJitTransformers, mergeTransformers } from './transformation';
 
 export interface AngularPluginOptions {
@@ -49,7 +51,8 @@ export interface AngularPluginOptions {
 
 // Add support for missing properties in Webpack types as well as the loader's file emitter
 interface WebpackCompilation extends compilation.Compilation {
-  compilationDependencies: Set<string>;
+  // tslint:disable-next-line: no-any
+  compilationDependencies: { add(item: string): any };
   rebuildModule(module: compilation.Module, callback: () => void): void;
   [AngularPluginSymbol]: FileEmitter;
 }
@@ -76,6 +79,10 @@ function initializeNgccProcessor(
   return { processor, errors, warnings };
 }
 
+function hashContent(content: string): Uint8Array {
+  return createHash('md5').update(content).digest();
+}
+
 const PLUGIN_NAME = 'angular-compiler';
 
 export class AngularWebpackPlugin {
@@ -87,6 +94,8 @@ export class AngularWebpackPlugin {
   private buildTimestamp!: number;
   private readonly lazyRouteMap: Record<string, string> = {};
   private readonly requiredFilesToEmit = new Set<string>();
+  private readonly requiredFilesToEmitCache = new Map<string, EmitFileResult | undefined>();
+  private readonly fileEmitHistory = new Map<string, { length: number; hash: Uint8Array }>();
 
   constructor(options: Partial<AngularPluginOptions> = {}) {
     this.pluginOptions = {
@@ -106,7 +115,8 @@ export class AngularWebpackPlugin {
     return this.pluginOptions;
   }
 
-  apply(compiler: Compiler & { watchMode?: boolean }): void {
+  apply(webpackCompiler: Compiler | WebpackFourCompiler): void {
+    const compiler = webpackCompiler as Compiler & { watchMode?: boolean };
     // Setup file replacements with webpack
     for (const [key, value] of Object.entries(this.pluginOptions.fileReplacements)) {
       new NormalModuleReplacementPlugin(
@@ -135,16 +145,17 @@ export class AngularWebpackPlugin {
       // Example: module -> module__ivy_ngcc
       resolverFactoryHooks.resolveOptions
         .for('normal')
-        .tap(PLUGIN_NAME, (resolveOptions: { mainFields: string[] }) => {
+        .tap(PLUGIN_NAME, (resolveOptions: { mainFields: string[], plugins: unknown[] }) => {
           const originalMainFields = resolveOptions.mainFields;
           const ivyMainFields = originalMainFields.map((f) => `${f}_ivy_ngcc`);
 
+          if (!resolveOptions.plugins) {
+            resolveOptions.plugins = [];
+          }
+          resolveOptions.plugins.push(pathsPlugin);
+
           return mergeResolverMainFields(resolveOptions, originalMainFields, ivyMainFields);
         });
-
-      resolverFactoryHooks.resolver.for('normal').tap(PLUGIN_NAME, (resolver: {}) => {
-        pathsPlugin.apply(resolver);
-      });
     });
 
     let ngccProcessor: NgccProcessor | undefined;
@@ -182,7 +193,8 @@ export class AngularWebpackPlugin {
 
       // Create a Webpack-based TypeScript compiler host
       const system = createWebpackSystem(
-        compiler.inputFileSystem,
+        // Webpack lacks an InputFileSytem type definition with sync functions
+        compiler.inputFileSystem as InputFileSystemSync,
         normalizePath(compiler.context),
       );
       const host = ts.createIncrementalCompilerHost(compilerOptions, system);
@@ -251,22 +263,7 @@ export class AngularWebpackPlugin {
 
       compilation.hooks.finishModules.tapPromise(PLUGIN_NAME, async (modules) => {
         // Rebuild any remaining AOT required modules
-        const rebuild = (filename: string) => new Promise<void>((resolve) => {
-          const module = modules.find(
-            ({ resource }: compilation.Module & { resource?: string }) =>
-              resource && normalizePath(resource) === filename,
-          );
-          if (!module) {
-            resolve();
-          } else {
-            compilation.rebuildModule(module, resolve);
-          }
-        });
-
-        for (const requiredFile of this.requiredFilesToEmit) {
-          await rebuild(requiredFile);
-        }
-        this.requiredFilesToEmit.clear();
+        await this.rebuildRequiredFiles(modules, compilation, fileEmitter);
 
         // Analyze program for unused files
         if (compilation.errors.length > 0) {
@@ -278,7 +275,7 @@ export class AngularWebpackPlugin {
             .filter((sourceFile) => !sourceFile.isDeclarationFile)
             .map((sourceFile) => sourceFile.fileName),
         );
-        modules.forEach(({ resource }: compilation.Module & { resource?: string }) => {
+        Array.from(modules).forEach(({ resource }: compilation.Module & { resource?: string }) => {
           const sourceFile = resource && builder.getSourceFile(resource);
           if (!sourceFile) {
             return;
@@ -302,6 +299,52 @@ export class AngularWebpackPlugin {
       // Store file emitter for loader usage
       compilation[AngularPluginSymbol] = fileEmitter;
     });
+  }
+
+  private async rebuildRequiredFiles(
+    modules: Iterable<compilation.Module>,
+    compilation: WebpackCompilation,
+    fileEmitter: FileEmitter,
+  ): Promise<void> {
+    if (this.requiredFilesToEmit.size === 0) {
+      return;
+    }
+
+    const rebuild = (webpackModule: compilation.Module) =>
+      new Promise<void>((resolve) => compilation.rebuildModule(webpackModule, () => resolve()));
+
+    const filesToRebuild = new Set<string>();
+    for (const requiredFile of this.requiredFilesToEmit) {
+      const history = this.fileEmitHistory.get(requiredFile);
+      if (history) {
+        const emitResult = await fileEmitter(requiredFile);
+        if (
+          emitResult?.content === undefined ||
+          history.length !== emitResult.content.length ||
+          emitResult.hash === undefined ||
+          Buffer.compare(history.hash, emitResult.hash) !== 0
+        ) {
+          // New emit result is different so rebuild using new emit result
+          this.requiredFilesToEmitCache.set(requiredFile, emitResult);
+          filesToRebuild.add(requiredFile);
+        }
+      } else {
+        // No emit history so rebuild
+        filesToRebuild.add(requiredFile);
+      }
+    }
+
+    if (filesToRebuild.size > 0) {
+      for (const webpackModule of [...modules]) {
+        const resource = (webpackModule as compilation.Module & { resource?: string }).resource;
+        if (resource && filesToRebuild.has(normalizePath(resource))) {
+          await rebuild(webpackModule);
+        }
+      }
+    }
+
+    this.requiredFilesToEmit.clear();
+    this.requiredFilesToEmitCache.clear();
   }
 
   private loadConfiguration(compilation: WebpackCompilation) {
@@ -432,10 +475,14 @@ export class AngularWebpackPlugin {
           if (angularCompiler.getDiagnosticsForFile) {
             // @angular/compiler-cli 11.1+
             const { OptimizeFor } = require('@angular/compiler-cli/src/ngtsc/typecheck/api');
-            diagnosticsReporter(angularCompiler.getDiagnosticsForFile(sourceFile, OptimizeFor.WholeProgram));
+            diagnosticsReporter(
+              angularCompiler.getDiagnosticsForFile(sourceFile, OptimizeFor.WholeProgram),
+            );
           } else {
             // @angular/compiler-cli 11.0+
-            const getDiagnostics = angularCompiler.getDiagnostics as (sourceFile: ts.SourceFile) => ts.Diagnostic[];
+            const getDiagnostics = angularCompiler.getDiagnostics as (
+              sourceFile: ts.SourceFile,
+            ) => ts.Diagnostic[];
             diagnosticsReporter(getDiagnostics.call(angularCompiler, sourceFile));
           }
         }
@@ -446,7 +493,7 @@ export class AngularWebpackPlugin {
           !ignoreForEmit.has(sourceFile) &&
           !angularCompiler.incrementalDriver.safeToSkipEmit(sourceFile)
         ) {
-          this.requiredFilesToEmit.add(sourceFile.fileName);
+          this.requiredFilesToEmit.add(normalizePath(sourceFile.fileName));
         }
       }
 
@@ -461,7 +508,7 @@ export class AngularWebpackPlugin {
         mergeTransformers(angularCompiler.prepareEmit().transformers, transformers),
         getDependencies,
         (sourceFile) => {
-          this.requiredFilesToEmit.delete(sourceFile.fileName);
+          this.requiredFilesToEmit.delete(normalizePath(sourceFile.fileName));
           angularCompiler.incrementalDriver.recordSuccessfulEmit(sourceFile);
         },
       );
@@ -550,13 +597,18 @@ export class AngularWebpackPlugin {
     onAfterEmit?: (sourceFile: ts.SourceFile) => void,
   ): FileEmitter {
     return async (file: string) => {
-      const sourceFile = program.getSourceFile(file);
+      const filePath = normalizePath(file);
+      if (this.requiredFilesToEmitCache.has(filePath)) {
+        return this.requiredFilesToEmitCache.get(filePath);
+      }
+
+      const sourceFile = program.getSourceFile(filePath);
       if (!sourceFile) {
         return undefined;
       }
 
-      let content: string | undefined = undefined;
-      let map: string | undefined = undefined;
+      let content: string | undefined;
+      let map: string | undefined;
       program.emit(
         sourceFile,
         (filename, data) => {
@@ -573,12 +625,19 @@ export class AngularWebpackPlugin {
 
       onAfterEmit?.(sourceFile);
 
+      let hash;
+      if (content !== undefined && this.watchMode) {
+        // Capture emit history info for Angular rebuild analysis
+        hash = hashContent(content);
+        this.fileEmitHistory.set(filePath, { length: content.length, hash });
+      }
+
       const dependencies = [
         ...program.getAllDependencies(sourceFile),
         ...getExtraDependencies(sourceFile),
       ].map(externalizePath);
 
-      return { content, map, dependencies };
+      return { content, map, dependencies, hash };
     };
   }
 }

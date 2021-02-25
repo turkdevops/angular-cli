@@ -12,13 +12,11 @@ import {
 import * as CopyWebpackPlugin from 'copy-webpack-plugin';
 import { existsSync } from 'fs';
 import * as path from 'path';
-import { RollupOptions } from 'rollup';
 import { ScriptTarget } from 'typescript';
 import {
   Compiler,
   Configuration,
   ContextReplacementPlugin,
-  RuleSetLoader,
   RuleSetRule,
   compilation,
   debug,
@@ -43,7 +41,6 @@ import {
   NamedLazyChunksPlugin,
   OptimizeCssWebpackPlugin,
   ScriptsWebpackPlugin,
-  WebpackRollupLoader,
 } from '../plugins';
 import { getEsVersionForFileName, getOutputHashFormat, getWatchOptions, normalizeExtraEntryPoints } from '../utils/helpers';
 import { IGNORE_WARNINGS } from '../utils/stats';
@@ -82,49 +79,6 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
   if (buildOptions.main) {
     const mainPath = path.resolve(root, buildOptions.main);
     entryPoints['main'] = [mainPath];
-
-    if (buildOptions.experimentalRollupPass) {
-      // NOTE: the following are known problems with experimentalRollupPass
-      // - vendorChunk, commonChunk, namedChunks: these won't work, because by the time webpack
-      // sees the chunks, the context of where they came from is lost.
-      // - webWorkerTsConfig: workers must be imported via a root relative path (e.g.
-      // `app/search/search.worker`) instead of a relative path (`/search.worker`) because
-      // of the same reason as above.
-      // - loadChildren string syntax: doesn't work because rollup cannot follow the imports.
-
-      // Rollup options, except entry module, which is automatically inferred.
-      const rollupOptions: RollupOptions = {};
-
-      // Add rollup plugins/rules.
-      extraRules.push({
-        test: mainPath,
-        // Ensure rollup loader executes after other loaders.
-        enforce: 'post',
-        use: [{
-          loader: WebpackRollupLoader,
-          options: rollupOptions,
-        }],
-      });
-
-      // Rollup bundles will include the dynamic System.import that was inside Angular and webpack
-      // will emit warnings because it can't resolve it. We just ignore it.
-      // TODO: maybe use https://webpack.js.org/configuration/stats/#statswarningsfilter instead.
-
-      // Ignore all "Critical dependency: the request of a dependency is an expression" warnings.
-      extraPlugins.push(new ContextReplacementPlugin(/./));
-      // Ignore "System.import() is deprecated" warnings for the main file and js files.
-      // Might still get them if @angular/core gets split into a lazy module.
-      extraRules.push({
-        test: mainPath,
-        enforce: 'post',
-        parser: { system: true },
-      });
-      extraRules.push({
-        test: /\.js$/,
-        enforce: 'post',
-        parser: { system: true },
-      });
-    }
   }
 
   const differentialLoadingMode = buildOptions.differentialLoadingNeeded && !buildOptions.watch;
@@ -137,11 +91,8 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       if (buildBrowserFeatures.isEs5SupportNeeded()) {
         const polyfillsChunkName = 'polyfills-es5';
         entryPoints[polyfillsChunkName] = [path.join(__dirname, '..', 'es5-polyfills.js')];
-        if (differentialLoadingMode) {
-          // Add zone.js legacy support to the es5 polyfills
-          // This is a noop execution-wise if zone-evergreen is not used.
-          entryPoints[polyfillsChunkName].push('zone.js/dist/zone-legacy');
 
+        if (differentialLoadingMode) {
           // Since the chunkFileName option schema does not allow the function overload, add a plugin
           // that changes the name of the ES5 polyfills chunk to not include ES2015.
           extraPlugins.push({
@@ -371,7 +322,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
     });
   }
 
-  let buildOptimizerUseRule: RuleSetLoader[] = [];
+  let buildOptimizerUseRule: RuleSetRule[] = [];
   if (buildOptions.buildOptimizer) {
     extraPlugins.push(new BuildOptimizerWebpackPlugin());
     buildOptimizerUseRule = [
@@ -408,9 +359,8 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
       output: {
         ecma: terserEcma,
         // For differential loading, this is handled in the bundle processing.
-        // This should also work with just true but the experimental rollup support breaks without this check.
         ascii_only: !differentialLoadingMode,
-        // default behavior (undefined value) is to keep only important comments (licenses, etc.)
+        // Default behavior (undefined value) is to keep only important comments (licenses, etc.)
         comments: !buildOptions.extractLicenses && undefined,
         webkit: true,
         beautify: shouldBeautify,

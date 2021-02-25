@@ -10,6 +10,7 @@ import { tags } from '@angular-devkit/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as webpack from 'webpack';
+import { BuildBrowserFeatures } from '../../utils/build-browser-features';
 import { WebpackConfigOptions } from '../../utils/build-options';
 import {
   AnyComponentStyleBudgetChecker,
@@ -21,9 +22,9 @@ import { assetNameTemplateFactory, getOutputHashFormat, normalizeExtraEntryPoint
 
 // tslint:disable-next-line:no-big-function
 export function getStylesConfig(wco: WebpackConfigOptions) {
-  const autoprefixer = require('autoprefixer');
   const MiniCssExtractPlugin = require('mini-css-extract-plugin');
   const postcssImports = require('postcss-import');
+  const postcssPresetEnv: typeof import('postcss-preset-env') = require('postcss-preset-env');
 
   const { root, buildOptions } = wco;
   const entryPoints: { [key: string]: [string, ...string[]] } = {};
@@ -90,7 +91,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
   }
 
   // set base rules to derive final rules from
-  const baseRules: { test: RegExp, use: webpack.RuleSetLoader[] }[] = [
+  const baseRules: { test: RegExp, use: webpack.RuleSetUseItem[] }[] = [
     { test: /\.css$/, use: [] },
     {
       test: /\.scss$|\.sass$/,
@@ -166,6 +167,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
     const fullPath = path.join(basePath, tailwindConfigFile);
     if (fs.existsSync(fullPath)) {
       tailwindConfigPath = fullPath;
+      break;
     }
   }
   // Only load Tailwind CSS plugin if configuration file was found.
@@ -188,6 +190,7 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
     }
   }
 
+  const { supportedBrowsers } = new BuildBrowserFeatures(wco.projectRoot);
   const postcssOptionsCreator = (sourceMap: boolean, extracted: boolean | undefined) => {
     return (loader: webpack.loader.LoaderContext) => ({
       map: sourceMap && {
@@ -222,7 +225,12 @@ export function getStylesConfig(wco: WebpackConfigOptions) {
           extracted,
         }),
         ...extraPostcssPlugins,
-        autoprefixer(),
+        postcssPresetEnv({
+          // tslint:disable-next-line: no-any
+          browsers: supportedBrowsers as any, // Typings only allow a string
+          autoprefixer: true,
+          stage: 3,
+        }),
       ],
     });
   };

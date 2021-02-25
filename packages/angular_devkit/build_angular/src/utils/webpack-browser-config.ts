@@ -44,18 +44,6 @@ export async function generateWebpackConfig(
     throw new Error(`The 'buildOptimizer' option cannot be used without 'aot'.`);
   }
 
-  // Ensure Rollup Concatenation is only used with compatible options.
-  if (options.experimentalRollupPass) {
-    if (!options.aot) {
-      throw new Error(`The 'experimentalRollupPass' option cannot be used without 'aot'.`);
-    }
-
-    if (options.vendorChunk || options.commonChunk || options.namedChunks) {
-      throw new Error(`The 'experimentalRollupPass' option cannot be used with the`
-        + `'vendorChunk', 'commonChunk', 'namedChunks' options set to true.`);
-    }
-  }
-
   const tsConfigPath = path.resolve(workspaceRoot, options.tsConfig);
   const tsConfig = readTsconfig(tsConfigPath);
 
@@ -79,23 +67,6 @@ export async function generateWebpackConfig(
   wco.buildOptions.progress = defaultProgress(wco.buildOptions.progress);
 
   const webpackConfig = webpackMerge(webpackPartialGenerator(wco));
-
-  if (supportES2015) {
-    if (!webpackConfig.resolve) {
-      webpackConfig.resolve = {};
-    }
-    if (Array.isArray(webpackConfig.resolve.alias)) {
-      webpackConfig.resolve.alias.push({
-        alias: 'zone.js/dist/zone',
-        name: 'zone.js/dist/zone-evergreen',
-      });
-    } else {
-      if (!webpackConfig.resolve.alias) {
-        webpackConfig.resolve.alias = {};
-      }
-      webpackConfig.resolve.alias['zone.js/dist/zone'] = 'zone.js/dist/zone-evergreen';
-    }
-  }
 
   if (profilingEnabled) {
     const esVersionInFileName = getEsVersionForFileName(

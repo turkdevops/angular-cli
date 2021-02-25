@@ -18,7 +18,6 @@ import {
   ivy,
 } from '@ngtools/webpack';
 import * as path from 'path';
-import { RuleSetLoader } from 'webpack';
 import { WebpackConfigOptions, BuildOptions } from '../../utils/build-options';
 import { legacyIvyPluginEnabled } from '../../utils/environment-options';
 
@@ -42,11 +41,6 @@ function canUseIvyPlugin(wco: WebpackConfigOptions): boolean {
     return false;
   }
 
-  // This pass relies on internals of the original plugin
-  if (wco.buildOptions.experimentalRollupPass) {
-    return false;
-  }
-
   return true;
 }
 
@@ -60,6 +54,8 @@ function createIvyPlugin(
 
   const compilerOptions: CompilerOptions = {
     sourceMap: buildOptions.sourceMap.scripts,
+    declaration: false,
+    declarationMap: false,
   };
 
   if (buildOptions.preserveSymlinks !== undefined) {
@@ -196,21 +192,20 @@ export function getAotConfig(wco: WebpackConfigOptions, i18nExtract = false) {
   const optimize = buildOptions.optimization.scripts;
   const useIvyOnlyPlugin = canUseIvyPlugin(wco) && !i18nExtract;
 
-  let buildOptimizerRules: RuleSetLoader[] = [];
-  if (buildOptions.buildOptimizer) {
-    buildOptimizerRules = [{
-      loader: buildOptimizerLoaderPath,
-      options: { sourceMap: buildOptions.sourceMap.scripts }
-    }];
-  }
-
   return {
     module: {
       rules: [
         {
           test: useIvyOnlyPlugin ? /\.tsx?$/ : /(?:\.ngfactory\.js|\.ngstyle\.js|\.tsx?)$/,
           use: [
-            ...buildOptimizerRules,
+            ...(buildOptions.buildOptimizer
+              ? [
+                  {
+                    loader: buildOptimizerLoaderPath,
+                    options: { sourceMap: buildOptions.sourceMap.scripts },
+                  },
+                ]
+              : []),
             useIvyOnlyPlugin ? ivy.AngularWebpackLoaderPath : NgToolsLoader,
           ],
         },
