@@ -53,8 +53,6 @@ executors:
     docker:
       - image: cimg/node:<< parameters.nodeversion >>
     working_directory: ~/ng
-    environment:
-      NPM_CONFIG_PREFIX: ~/.npm-global
     resource_class: large
 
   windows-executor:
@@ -179,13 +177,18 @@ jobs:
 
   e2e-cli:
     parameters:
+      nodeversion:
+        type: string
+        default: *default_nodeversion
       ve:
         type: boolean
         default: false
       snapshots:
         type: boolean
         default: false
-    executor: test-executor
+    executor:
+      name: test-executor
+      nodeversion: << parameters.nodeversion >>
     parallelism: 6
     steps:
       - custom_attach_workspace
@@ -197,25 +200,12 @@ jobs:
           name: Execute CLI E2E Tests
           command: |
             mkdir /mnt/ramdisk/e2e-main
-            PATH=~/.npm-global/bin:$PATH node ./tests/legacy-cli/run_e2e --nb-shards=${CIRCLE_NODE_TOTAL} --shard=${CIRCLE_NODE_INDEX} <<# parameters.ve >>--ve<</ parameters.ve >> <<# parameters.snapshots >>--ng-snapshots<</ parameters.snapshots >> --tmpdir=/mnt/ramdisk/e2e-main
+            node ./tests/legacy-cli/run_e2e --nb-shards=${CIRCLE_NODE_TOTAL} --shard=${CIRCLE_NODE_INDEX} <<# parameters.ve >>--ve<</ parameters.ve >> <<# parameters.snapshots >>--ng-snapshots<</ parameters.snapshots >> --tmpdir=/mnt/ramdisk/e2e-main
       - run:
           name: Execute CLI E2E Tests Subset with Yarn
           command: |
             mkdir /mnt/ramdisk/e2e-yarn
-            PATH=~/.npm-global/bin:$PATH node ./tests/legacy-cli/run_e2e --nb-shards=${CIRCLE_NODE_TOTAL} --shard=${CIRCLE_NODE_INDEX} <<# parameters.ve >>--ve<</ parameters.ve >> <<# parameters.snapshots >>--ng-snapshots<</ parameters.snapshots >> --yarn --tmpdir=/mnt/ramdisk/e2e-yarn --glob="{tests/basic/**,tests/update/**}"
-
-  e2e-cli-node-14:
-    executor:
-      name: test-executor
-      nodeversion: "14.15"
-    parallelism: 6
-    steps:
-      - custom_attach_workspace
-      - browser-tools/install-chrome
-      - run:
-          name: Initialize Environment
-          command: ./.circleci/env.sh
-      - run: PATH=~/.npm-global/bin:$PATH node ./tests/legacy-cli/run_e2e --nb-shards=${CIRCLE_NODE_TOTAL} --shard=${CIRCLE_NODE_INDEX}
+            node ./tests/legacy-cli/run_e2e --nb-shards=${CIRCLE_NODE_TOTAL} --shard=${CIRCLE_NODE_INDEX} <<# parameters.ve >>--ve<</ parameters.ve >> <<# parameters.snapshots >>--ng-snapshots<</ parameters.snapshots >> --yarn --tmpdir=/mnt/ramdisk/e2e-yarn --glob="{tests/basic/**,tests/update/**}"
 
   test-browsers:
     executor:
@@ -238,8 +228,8 @@ jobs:
         # Waits for the Saucelabs tunnel to be ready. This ensures that we don't run tests
         # too early without Saucelabs not being ready.
       - run: ./scripts/saucelabs/wait-for-tunnel.sh
-      - run: PATH=~/.npm-global/bin:$PATH node ./tests/legacy-cli/run_e2e ./tests/legacy-cli/e2e/tests/misc/browsers.ts --ve
-      - run: PATH=~/.npm-global/bin:$PATH node ./tests/legacy-cli/run_e2e ./tests/legacy-cli/e2e/tests/misc/browsers.ts 
+      - run: node ./tests/legacy-cli/run_e2e ./tests/legacy-cli/e2e/tests/misc/browsers.ts --ve
+      - run: node ./tests/legacy-cli/run_e2e ./tests/legacy-cli/e2e/tests/misc/browsers.ts 
       - run: ./scripts/saucelabs/stop-tunnel.sh
 
   build:
@@ -334,20 +324,27 @@ workflows:
           requires:
             - setup
       - e2e-cli:
+          name: e2e-cli<<# matrix.ve >>-ve<</ matrix.ve >>
+          matrix:
+            alias: e2e-cli-renderers
+            parameters:
+              ve: [true, false]
           post-steps:
-            - store_artifacts:
-                path: /tmp/dist
-                destination: cli/new-production
+            - unless:
+                condition: << matrix.ve >>
+                steps:
+                  - store_artifacts:
+                      path: /tmp/dist
+                      destination: cli/new-production
           requires:
             - build
       - e2e-cli:
-          name: e2e-cli-ve
-          ve: true
-          requires:
-            - build
-      - e2e-cli:
-          name: e2e-cli-ng-snapshots
+          name: e2e-cli-ng<<# matrix.ve >>-ve<</ matrix.ve >>-snapshots
           snapshots: true
+          matrix:
+            alias: e2e-cli-renderers-snapshots
+            parameters:
+              ve: [true, false]
           requires:
             - e2e-cli
           filters:
@@ -356,17 +353,8 @@ workflows:
                 - renovate/angular
                 - master
       - e2e-cli:
-          name: e2e-cli-ng-ve-snapshots
-          snapshots: true
-          ve: true
-          requires:
-            - e2e-cli
-          filters:
-            branches:
-              only:
-                - renovate/angular
-                - master
-      - e2e-cli-node-14:
+          name: e2e-cli-node-14
+          nodeversion: "14.15"
           <<: *only_release_branches
           requires:
             - e2e-cli
