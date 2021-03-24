@@ -31,7 +31,6 @@ import { NodePackageInstallTask } from '@angular-devkit/schematics/tasks';
 import { Schema as ComponentOptions } from '../component/schema';
 import { Schema as E2eOptions } from '../e2e/schema';
 import { NodeDependencyType, addPackageJsonDependency } from '../utility/dependencies';
-import { JSONFile } from '../utility/json-file';
 import { latestVersions } from '../utility/latest-versions';
 import { applyLintFix } from '../utility/lint-fix';
 import { relativePathToWorkspaceRoot } from '../utility/paths';
@@ -65,28 +64,6 @@ function addDependenciesToPackageJson(options: ApplicationOptions) {
     }
 
     return host;
-  };
-}
-
-/**
- * Merges the application tslint.json with the workspace tslint.json
- * when the application being created is a root application
- *
- * @param {Tree} parentHost The root host of the schematic
- */
-function mergeWithRootTsLint(parentHost: Tree) {
-  return (host: Tree) => {
-    const tsLintPath = '/tslint.json';
-    const rulesPath = ['rules'];
-    if (!host.exists(tsLintPath)) {
-      return;
-    }
-
-    const rootTsLintFile = new JSONFile(parentHost, tsLintPath);
-    const rootRules = rootTsLintFile.get(rulesPath) as {};
-    const appRules = new JSONFile(host, tsLintPath).get(rulesPath) as {};
-    rootTsLintFile.modify(rulesPath, { ...rootRules, ...appRules });
-    host.overwrite(tsLintPath, rootTsLintFile.content);
   };
 }
 
@@ -172,6 +149,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
     targets: {
       build: {
         builder: Builders.Browser,
+        defaultConfiguration: 'production',
         options: {
           outputPath: `dist/${options.name}`,
           index: `${sourceRoot}/index.html`,
@@ -190,29 +168,34 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
         },
         configurations: {
           production: {
+            budgets,
             fileReplacements: [{
               replace: `${sourceRoot}/environments/environment.ts`,
               with: `${sourceRoot}/environments/environment.prod.ts`,
             }],
+            buildOptimizer: true,
             optimization: true,
             outputHashing: 'all',
             sourceMap: false,
             namedChunks: false,
             extractLicenses: true,
             vendorChunk: false,
-            buildOptimizer: true,
-            budgets,
+          },
+          development: {
+            vendorChunk: true,
           },
         },
       },
       serve: {
         builder: Builders.DevServer,
-        options: {
-          browserTarget: `${options.name}:build`,
-        },
+        defaultConfiguration: 'development',
+        options: {},
         configurations: {
           production: {
             browserTarget: `${options.name}:build:production`,
+          },
+          development: {
+            browserTarget: `${options.name}:build:development`,
           },
         },
       },
@@ -239,18 +222,6 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
           scripts: [],
         },
       },
-      lint: options.minimal ? undefined : {
-        builder: Builders.TsLint,
-        options: {
-          tsConfig: [
-            `${projectRoot}tsconfig.app.json`,
-            `${projectRoot}tsconfig.spec.json`,
-          ],
-          exclude: [
-            '**/node_modules/**',
-          ],
-        },
-      },
     },
   };
 
@@ -266,7 +237,7 @@ function addAppToWorkspaceFile(options: ApplicationOptions, appDir: string): Rul
   });
 }
 function minimalPathFilter(path: string): boolean {
-  const toRemoveList = /(test.ts|tsconfig.spec.json|karma.conf.js|tslint.json).template$/;
+  const toRemoveList = /(test.ts|tsconfig.spec.json|karma.conf.js).template$/;
 
   return !toRemoveList.test(path);
 }
@@ -321,7 +292,6 @@ export default function (options: ApplicationOptions): Rule {
             appName: options.name,
             isRootApp,
           }),
-          isRootApp ? mergeWithRootTsLint(host) : noop(),
           move(appDir),
         ]), MergeStrategy.Overwrite),
       schematic('module', {

@@ -10,7 +10,7 @@ import {
   buildOptimizerLoaderPath,
 } from '@angular-devkit/build-optimizer';
 import * as CopyWebpackPlugin from 'copy-webpack-plugin';
-import { existsSync } from 'fs';
+import { createWriteStream, existsSync, promises as fsPromises } from 'fs';
 import * as path from 'path';
 import { ScriptTarget } from 'typescript';
 import {
@@ -21,7 +21,6 @@ import {
   compilation,
   debug,
 } from 'webpack';
-import { RawSource } from 'webpack-sources';
 import { AssetPatternClass } from '../../browser/schema';
 import { BuildBrowserFeatures, maxWorkers } from '../../utils';
 import { WebpackConfigOptions } from '../../utils/build-options';
@@ -35,6 +34,7 @@ import {
 } from '../../utils/environment-options';
 import { findAllNodeModules } from '../../utils/find-up';
 import { Spinner } from '../../utils/spinner';
+import { addError } from '../../utils/webpack-diagnostics';
 import { isWebpackFiveOrHigher, withWebpackFourOrFive } from '../../utils/webpack-version';
 import {
   DedupeModuleResolvePlugin,
@@ -290,9 +290,26 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
     extraPlugins.push(
       new (class {
         apply(compiler: Compiler) {
-          compiler.hooks.emit.tap('angular-cli-stats', compilation => {
-            const data = JSON.stringify(compilation.getStats().toJson('verbose'), undefined, 2);
-            compilation.assets['stats.json'] = new RawSource(data);
+          compiler.hooks.done.tapPromise('angular-cli-stats', async (stats) => {
+            const { stringifyStream } = await import('@discoveryjs/json-ext');
+            const data = stats.toJson('verbose');
+            const statsOutputPath = path.join(stats.compilation.outputOptions.path, 'stats.json');
+
+            try {
+              await fsPromises.mkdir(path.dirname(statsOutputPath), { recursive: true });
+
+              await new Promise<void>((resolve, reject) =>
+                stringifyStream(data)
+                  .pipe(createWriteStream(statsOutputPath))
+                  .on('close', resolve)
+                  .on('error', reject),
+              );
+            } catch (error) {
+              addError(
+                stats.compilation,
+                `Unable to write stats file: ${error.message || 'unknown error'}`,
+              );
+            }
           });
         }
       })(),
@@ -486,6 +503,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
               options: {
                 cacheDirectory: findCachePath('babel-webpack'),
                 scriptTarget: wco.scriptTarget,
+                aot: buildOptions.aot,
               },
             },
             ...buildOptimizerUseRule,
@@ -503,8 +521,7 @@ export function getCommonConfig(wco: WebpackConfigOptions): Configuration {
     plugins: [
       // Always replace the context for the System.import in angular/core to prevent warnings.
       // https://github.com/angular/angular/issues/11580
-      // With VE the correct context is added in @ngtools/webpack, but Ivy doesn't need it at all.
-      new ContextReplacementPlugin(/\@angular(\\|\/)core(\\|\/)/),
+      new ContextReplacementPlugin(/\@angular(\\|\/)core(\\|\/)/, path.join(projectRoot, '$_lazy_route_resources'), {}),
       new DedupeModuleResolvePlugin({ verbose: buildOptions.verbose }),
       ...extraPlugins,
     ],

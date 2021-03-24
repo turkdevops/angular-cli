@@ -13,6 +13,7 @@ import {
 import { BuildResult, runWebpack } from '@angular-devkit/build-webpack';
 import { JsonObject } from '@angular-devkit/core';
 import type { ɵParsedMessage as LocalizeMessage } from '@angular/localize';
+import type { Diagnostics } from '@angular/localize/src/tools/src/diagnostics';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as webpack from 'webpack';
@@ -38,6 +39,7 @@ function getI18nOutfile(format: string | undefined) {
     case 'xliff2':
       return 'messages.xlf';
     case 'json':
+    case 'legacy-migrate':
       return 'messages.json';
     case 'arb':
       return 'messages.arb';
@@ -46,7 +48,7 @@ function getI18nOutfile(format: string | undefined) {
   }
 }
 
-async function getSerializer(format: Format, sourceLocale: string, basePath: string, useLegacyIds: boolean) {
+async function getSerializer(format: Format, sourceLocale: string, basePath: string, useLegacyIds: boolean, diagnostics: Diagnostics) {
   switch (format) {
     case Format.Xmb:
       const { XmbTranslationSerializer } =
@@ -73,8 +75,12 @@ async function getSerializer(format: Format, sourceLocale: string, basePath: str
       const { SimpleJsonTranslationSerializer } =
         await import('@angular/localize/src/tools/src/extract/translation_files/json_translation_serializer');
 
-      // tslint:disable-next-line: no-any
       return new SimpleJsonTranslationSerializer(sourceLocale);
+    case Format.LegacyMigrate:
+      const { LegacyMessageIdMigrationSerializer } =
+        await import('@angular/localize/src/tools/src/extract/translation_files/legacy_message_id_migration_serializer');
+
+      return new LegacyMessageIdMigrationSerializer(diagnostics);
     case Format.Arb:
       const { ArbTranslationSerializer } =
         await import('@angular/localize/src/tools/src/extract/translation_files/arb_translation_serializer');
@@ -113,6 +119,9 @@ function normalizeFormatOption(options: ExtractI18nBuilderOptions) {
       break;
     case Format.Arb:
       format = Format.Arb;
+      break;
+    case Format.LegacyMigrate:
+      format = Format.LegacyMigrate;
       break;
     case undefined:
       format = Format.Xlf;
@@ -257,6 +266,7 @@ export async function execute(
       return {
         success: false,
         error: `Ivy extraction requires the '@angular/localize' package.`,
+        outputPath: outFile,
        };
     }
   }
@@ -270,13 +280,11 @@ export async function execute(
     },
   ).toPromise();
 
-  // Complete if using VE
-  if (!usingIvy) {
-    return webpackResult;
-  }
+  // Set the outputPath to the extraction output location for downstream consumers
+  webpackResult.outputPath = outFile;
 
-  // Nothing to process if the Webpack build failed
-  if (!webpackResult.success) {
+  // Complete if using VE or if Webpack build failed
+  if (!usingIvy || !webpackResult.success) {
     return webpackResult;
   }
 
@@ -312,6 +320,7 @@ export async function execute(
     i18n.sourceLocale,
     basePath,
     useLegacyIds,
+    diagnostics,
   );
   const content = serializer.serialize(ivyMessages);
 

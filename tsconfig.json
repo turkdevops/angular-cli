@@ -11,9 +11,9 @@
     "rootDir": ".",
     "skipLibCheck": true,
     "strict": true,
-    "target": "es2018",
+    "target": "es2019",
     "lib": [
-      "es2018"
+      "es2019"
     ],
     "baseUrl": "",
     "rootDirs": [
@@ -57,7 +57,7 @@
     "suppressTsconfigOverrideWarnings": true
   },
   "exclude": [
-    "packages/angular_devkit/build_angular/src/typings.d.ts",
+    "packages/angular_devkit/build_angular/src/bazel-babel.d.ts",
     "bazel-out/**/*",
     "dist/**/*",
     "dist-schema/**",

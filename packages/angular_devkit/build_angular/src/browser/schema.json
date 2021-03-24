@@ -290,7 +290,8 @@
     "showCircularDependencies": {
       "type": "boolean",
       "description": "Show circular dependency warnings on builds.",
-      "default": true
+      "default": false,
+      "x-deprecated": "The recommended method to detect circular dependencies in project code is to use a either a lint rule or other external tooling."
     },
     "buildOptimizer": {
       "type": "boolean",
@@ -353,15 +354,6 @@
       "description": "Run the TypeScript type checker in a forked process.",
       "default": true
     },
-    "lazyModules": {
-      "description": "List of additional NgModule files that will be lazy loaded. Lazy router modules will be discovered automatically.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "x-deprecated": "'SystemJsNgModuleLoader' is deprecated, and this is part of its usage. Use 'import()' syntax instead.",
-      "default": []
-    },
     "budgets": {
       "description": "Budget thresholds to ensure parts of your application stay within boundaries which you set.",
       "type": "array",
@@ -383,11 +375,6 @@
         "anonymous",
         "use-credentials"
       ]
-    },
-    "experimentalRollupPass": {
-      "type": "boolean",
-      "description": "Concatenate modules with Rollup before bundling them with Webpack.",
-      "default": false
     },
     "allowedCommonJsDependencies": {
       "description": "A list of CommonJS packages that are allowed to be used without a build time warning.",

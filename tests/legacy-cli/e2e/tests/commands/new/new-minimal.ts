@@ -15,7 +15,6 @@ export default function() {
       .then(() => expectFileNotToExist('protractor.conf.js'))
       .then(() => expectFileNotToExist('src/test.ts'))
       .then(() => expectFileNotToExist('tsconfig.spec.json'))
-      .then(() => expectFileNotToExist('tslint.json'))
       .then(() => expectFileNotToExist('src/app/app.component.html'))
       .then(() => expectFileNotToExist('src/app/app.component.css'))
       .then(() => expectFileNotToExist('src/app/app.component.spec.ts'))
@@ -26,6 +25,6 @@ export default function() {
       .then(() => expectToFail(() => expectFileToMatch('package.json', '"jasmine-core":')))
 
       // Try to run a build.
-      .then(() => ng('build'))
+      .then(() => ng('build', '--configuration=development'))
   );
 }

@@ -95,13 +95,16 @@ function addLibToWorkspaceFile(
       targets: {
         build: {
           builder: Builders.NgPackagr,
+          defaultConfiguration: 'production',
           options: {
-            tsConfig: `${projectRoot}/tsconfig.lib.json`,
             project: `${projectRoot}/ng-package.json`,
           },
           configurations: {
             production: {
               tsConfig: `${projectRoot}/tsconfig.lib.prod.json`,
+            },
+            development: {
+              tsConfig: `${projectRoot}/tsconfig.lib.json`,
             },
           },
         },
@@ -111,18 +114,6 @@ function addLibToWorkspaceFile(
             main: `${projectRoot}/src/test.ts`,
             tsConfig: `${projectRoot}/tsconfig.spec.json`,
             karmaConfig: `${projectRoot}/karma.conf.js`,
-          },
-        },
-        lint: {
-          builder: Builders.TsLint,
-          options: {
-            tsConfig: [
-              `${projectRoot}/tsconfig.lib.json`,
-              `${projectRoot}/tsconfig.spec.json`,
-            ],
-            exclude: [
-              '**/node_modules/**',
-            ],
           },
         },
       },

@@ -7,7 +7,7 @@
  */
 import { BuilderContext, BuilderOutput, createBuilder } from '@angular-devkit/architect';
 import { EmittedFiles, WebpackLoggingCallback, runWebpack } from '@angular-devkit/build-webpack';
-import { getSystemPath, json, normalize, resolve, tags } from '@angular-devkit/core';
+import { getSystemPath, json, logging, normalize, resolve, tags } from '@angular-devkit/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Observable, from } from 'rxjs';
@@ -221,26 +221,7 @@ export function buildWebpackBrowser(
         const buildBrowserFeatures = new BuildBrowserFeatures(sysProjectRoot);
         const isDifferentialLoadingNeeded = buildBrowserFeatures.isDifferentialLoadingNeeded(target);
 
-        if (target > ScriptTarget.ES2015 && isDifferentialLoadingNeeded) {
-          context.logger.warn(tags.stripIndent`
-          Warning: Using differential loading with targets ES5 and ES2016 or higher may
-          cause problems. Browsers with support for ES2015 will load the ES2016+ scripts
-          referenced with script[type="module"] but they may not support ES2016+ syntax.
-        `);
-        }
-
-        const hasIE9 = buildBrowserFeatures.supportedBrowsers.includes('ie 9');
-        const hasIE10 = buildBrowserFeatures.supportedBrowsers.includes('ie 10');
-        if (hasIE9 || hasIE10) {
-          const browsers =
-            (hasIE9 ? 'IE 9' + (hasIE10 ? ' & ' : '') : '') + (hasIE10 ? 'IE 10' : '');
-          context.logger.warn(
-            `Warning: Support was requested for ${browsers} in the project's browserslist configuration. ` +
-            (hasIE9 && hasIE10 ? 'These browsers are' : 'This browser is') +
-            ' no longer officially supported with Angular v11 and higher.' +
-            '\nFor additional information: https://v10.angular.io/guide/deprecations#ie-9-10-and-mobile',
-          );
-        }
+        checkInternetExplorerSupport(buildBrowserFeatures.supportedBrowsers, context.logger);
 
         return {
           ...(await initialize(options, context, isDifferentialLoadingNeeded, transforms.webpackConfiguration)),
@@ -268,7 +249,12 @@ export function buildWebpackBrowser(
             const spinner = new Spinner();
             spinner.enabled = options.progress !== false;
 
-            const { webpackStats: webpackRawStats, success, emittedFiles = [] } = buildEvent;
+            const {
+              webpackStats: webpackRawStats,
+              success,
+              emittedFiles = [],
+              outputPath: webpackOutputPath,
+            } = buildEvent;
             if (!webpackRawStats) {
               throw new Error('Webpack stats build result is required.');
             }
@@ -322,8 +308,7 @@ export function buildWebpackBrowser(
                     baseOutputPath,
                     Array.from(outputPaths.values()),
                     scriptsEntryPointName,
-                    // tslint:disable-next-line: no-non-null-assertion
-                    webpackStats.outputPath!,
+                    webpackOutputPath,
                     target <= ScriptTarget.ES5,
                     options.i18nMissingTranslation,
                   );
@@ -397,8 +382,7 @@ export function buildWebpackBrowser(
 
                   // Retrieve the content/map for the file
                   // NOTE: Additional future optimizations will read directly from memory
-                  // tslint:disable-next-line: no-non-null-assertion
-                  let filename = path.join(webpackStats.outputPath!, file.file);
+                  let filename = path.join(webpackOutputPath, file.file);
                   const code = fs.readFileSync(filename, 'utf8');
                   let map;
                   if (actionOptions.sourceMaps) {
@@ -548,12 +532,10 @@ export function buildWebpackBrowser(
                         [
                           {
                             glob: '**/*',
-                            // tslint:disable-next-line: no-non-null-assertion
-                            input: webpackStats.outputPath!,
+                            input: webpackOutputPath,
                             output: '',
                             ignore: [...processedFiles].map(f =>
-                              // tslint:disable-next-line: no-non-null-assertion
-                              path.relative(webpackStats.outputPath!, f),
+                              path.relative(webpackOutputPath, f),
                             ),
                           },
                         ],
@@ -609,8 +591,7 @@ export function buildWebpackBrowser(
                     baseOutputPath,
                     Array.from(outputPaths.values()),
                     scriptsEntryPointName,
-                    // tslint:disable-next-line: no-non-null-assertion
-                    webpackStats.outputPath!,
+                    webpackOutputPath,
                     target <= ScriptTarget.ES5,
                     options.i18nMissingTranslation,
                   );
@@ -809,6 +790,30 @@ function mapEmittedFilesToFileInfo(files: EmittedFiles[] = []): FileInfo[] {
   }
 
   return filteredFiles;
+}
+
+function checkInternetExplorerSupport(supportedBrowsers: string[], logger: logging.LoggerApi): void {
+  const hasIE9 = supportedBrowsers.includes('ie 9');
+  const hasIE10 = supportedBrowsers.includes('ie 10');
+  const hasIE11 = supportedBrowsers.includes('ie 11');
+
+  if (hasIE9 || hasIE10) {
+    const browsers = (hasIE9 ? 'IE 9' + (hasIE10 ? ' & ' : '') : '') + (hasIE10 ? 'IE 10' : '');
+    logger.warn(
+      `Warning: Support was requested for ${browsers} in the project's browserslist configuration. ` +
+      (hasIE9 && hasIE10 ? 'These browsers are' : 'This browser is') +
+      ' no longer officially supported with Angular v11 and higher.' +
+      '\nFor more information, see https://v10.angular.io/guide/deprecations#ie-9-10-and-mobile',
+    );
+  }
+
+  if (hasIE11) {
+    logger.warn(
+      `Warning: Support was requested for IE 11 in the project's browserslist configuration. ` +
+      'IE 11 support is deprecated since Angular v12.' +
+      '\nFor more information, see https://angular.io/guide/browser-support',
+    );
+  }
 }
 
 export default createBuilder<json.JsonObject & BrowserBuilderSchema>(buildWebpackBrowser);

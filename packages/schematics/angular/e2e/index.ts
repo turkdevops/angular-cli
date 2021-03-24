@@ -48,23 +48,19 @@ export default function (options: E2eOptions): Rule {
     project.targets.add({
       name: 'e2e',
       builder: Builders.Protractor,
+      defaultConfiguration: 'development',
       options: {
         protractorConfig: `${root}/protractor.conf.js`,
-        devServerTarget: `${options.relatedAppName}:serve`,
       },
       configurations: {
         production: {
           devServerTarget: `${options.relatedAppName}:serve:production`,
         },
+        development: {
+          devServerTarget: `${options.relatedAppName}:serve:development`,
+        },
       },
     });
-
-    const e2eTsConfig = `${root}/tsconfig.json`;
-    const lintTarget = project.targets.get('lint');
-    if (lintTarget && lintTarget.options && Array.isArray(lintTarget.options.tsConfig)) {
-      lintTarget.options.tsConfig =
-        lintTarget.options.tsConfig.concat(e2eTsConfig);
-    }
 
     return chain([
       updateWorkspace(workspace),

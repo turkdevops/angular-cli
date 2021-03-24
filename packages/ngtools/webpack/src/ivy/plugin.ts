@@ -8,11 +8,9 @@
 import { CompilerHost, CompilerOptions, readConfiguration } from '@angular/compiler-cli';
 import { NgtscProgram } from '@angular/compiler-cli/src/ngtsc/program';
 import { createHash } from 'crypto';
-import * as path from 'path';
 import * as ts from 'typescript';
 import {
   Compiler,
-  ContextReplacementPlugin,
   NormalModuleReplacementPlugin,
   WebpackFourCompiler,
   compilation,
@@ -26,6 +24,7 @@ import { SourceFileCache } from './cache';
 import { DiagnosticsReporter, createDiagnosticsReporter } from './diagnostics';
 import {
   augmentHostWithCaching,
+  augmentHostWithDependencyCollection,
   augmentHostWithNgcc,
   augmentHostWithReplacements,
   augmentHostWithResources,
@@ -45,7 +44,6 @@ export interface AngularPluginOptions {
   directTemplateLoading: boolean;
   emitClassMetadata: boolean;
   emitNgModuleScope: boolean;
-  suppressZoneJsIncompatibilityWarning: boolean;
   jitMode: boolean;
 }
 
@@ -92,7 +90,7 @@ export class AngularWebpackPlugin {
   private builder?: ts.EmitAndSemanticDiagnosticsBuilderProgram;
   private sourceFileCache?: SourceFileCache;
   private buildTimestamp!: number;
-  private readonly lazyRouteMap: Record<string, string> = {};
+  private readonly fileDependencies = new Map<string, Set<string>>();
   private readonly requiredFilesToEmit = new Set<string>();
   private readonly requiredFilesToEmitCache = new Map<string, EmitFileResult | undefined>();
   private readonly fileEmitHistory = new Map<string, { length: number; hash: Uint8Array }>();
@@ -106,7 +104,6 @@ export class AngularWebpackPlugin {
       substitutions: {},
       directTemplateLoading: true,
       tsconfig: 'tsconfig.json',
-      suppressZoneJsIncompatibilityWarning: false,
       ...options,
     };
   }
@@ -125,13 +122,6 @@ export class AngularWebpackPlugin {
       ).apply(compiler);
     }
 
-    // Mimic VE plugin's systemjs module loader resource location for consistency
-    new ContextReplacementPlugin(
-      /\@angular[\\\/]core[\\\/]/,
-      path.join(compiler.context, '$$_lazy_route_resource'),
-      this.lazyRouteMap,
-    ).apply(compiler);
-
     // Set resolver options
     const pathsPlugin = new TypeScriptPathsPlugin();
     compiler.hooks.afterResolvers.tap('angular-compiler', (compiler) => {
@@ -145,7 +135,7 @@ export class AngularWebpackPlugin {
       // Example: module -> module__ivy_ngcc
       resolverFactoryHooks.resolveOptions
         .for('normal')
-        .tap(PLUGIN_NAME, (resolveOptions: { mainFields: string[], plugins: unknown[] }) => {
+        .tap(PLUGIN_NAME, (resolveOptions: { mainFields: string[]; plugins: unknown[] }) => {
           const originalMainFields = resolveOptions.mainFields;
           const ivyMainFields = originalMainFields.map((f) => `${f}_ivy_ngcc`);
 
@@ -205,6 +195,11 @@ export class AngularWebpackPlugin {
       if (cache) {
         // Invalidate existing cache based on compiler file timestamps
         changedFiles = cache.invalidate(compiler.fileTimestamps, this.buildTimestamp);
+
+        // Invalidate file dependencies of changed files
+        for (const changedFile of changedFiles) {
+          this.fileDependencies.delete(normalizePath(changedFile));
+        }
       } else {
         // Initialize a new cache
         cache = new SourceFileCache();
@@ -221,6 +216,9 @@ export class AngularWebpackPlugin {
         host.getCanonicalFileName.bind(host),
         compilerOptions,
       );
+
+      // Setup source file dependency collection
+      augmentHostWithDependencyCollection(host, this.fileDependencies, moduleResolutionCache);
 
       // Setup on demand ngcc
       augmentHostWithNgcc(host, ngccProcessor, moduleResolutionCache);
@@ -273,15 +271,12 @@ export class AngularWebpackPlugin {
         const currentUnused = new Set(
           allProgramFiles
             .filter((sourceFile) => !sourceFile.isDeclarationFile)
-            .map((sourceFile) => sourceFile.fileName),
+            .map((sourceFile) => normalizePath(sourceFile.fileName)),
         );
         Array.from(modules).forEach(({ resource }: compilation.Module & { resource?: string }) => {
-          const sourceFile = resource && builder.getSourceFile(resource);
-          if (!sourceFile) {
-            return;
+          if (resource) {
+            this.markResourceUsed(normalizePath(resource), currentUnused);
           }
-
-          builder.getAllDependencies(sourceFile).forEach((dep) => currentUnused.delete(dep));
         });
         for (const unused of currentUnused) {
           if (previousUnused && previousUnused.has(unused)) {
@@ -299,6 +294,24 @@ export class AngularWebpackPlugin {
       // Store file emitter for loader usage
       compilation[AngularPluginSymbol] = fileEmitter;
     });
+  }
+
+  private markResourceUsed(
+    normalizedResourcePath: string,
+    currentUnused: Set<string>,
+  ): void {
+    if (!currentUnused.has(normalizedResourcePath)) {
+      return;
+    }
+
+    currentUnused.delete(normalizedResourcePath);
+    const dependencies = this.fileDependencies.get(normalizedResourcePath);
+    if (!dependencies) {
+      return;
+    }
+    for (const dependency of dependencies) {
+      this.markResourceUsed(normalizePath(dependency), currentUnused);
+    }
   }
 
   private async rebuildRequiredFiles(
@@ -363,19 +376,6 @@ export class AngularWebpackPlugin {
     compilerOptions.allowEmptyCodegenFiles = false;
     compilerOptions.annotationsAs = 'decorators';
     compilerOptions.enableResourceInlining = false;
-
-    if (
-      !this.pluginOptions.suppressZoneJsIncompatibilityWarning &&
-      compilerOptions.target &&
-      compilerOptions.target >= ts.ScriptTarget.ES2017
-    ) {
-      addWarning(
-        compilation,
-        'Zone.js does not support native async/await in ES2017+.\n' +
-          'These blocks are not intercepted by zone.js and will not triggering change detection.\n' +
-          'See: https://github.com/angular/zone.js/pull/1140 for more information.',
-      );
-    }
 
     return { compilerOptions, rootNames, errors };
   }
@@ -497,12 +497,6 @@ export class AngularWebpackPlugin {
         }
       }
 
-      // NOTE: This can be removed once support for the deprecated lazy route string format is removed
-      for (const lazyRoute of angularCompiler.listLazyRoutes()) {
-        const [routeKey] = lazyRoute.route.split('#');
-        this.lazyRouteMap[routeKey] = lazyRoute.referencedModule.filePath;
-      }
-
       return this.createFileEmitter(
         builder,
         mergeTransformers(angularCompiler.prepareEmit().transformers, transformers),
@@ -555,36 +549,8 @@ export class AngularWebpackPlugin {
 
     const transformers = createJitTransformers(builder, this.pluginOptions);
 
-    // Required to support asynchronous resource loading
-    // Must be done before listing lazy routes
-    // NOTE: This can be removed once support for the deprecated lazy route string format is removed
-    const angularProgram = new NgtscProgram(
-      rootNames,
-      compilerOptions,
-      host,
-      this.ngtscNextProgram,
-    );
-    const angularCompiler = angularProgram.compiler;
-    const pendingAnalysis = angularCompiler.analyzeAsync().then(() => {
-      for (const lazyRoute of angularCompiler.listLazyRoutes()) {
-        const [routeKey] = lazyRoute.route.split('#');
-        this.lazyRouteMap[routeKey] = lazyRoute.referencedModule.filePath;
-      }
-
-      return this.createFileEmitter(builder, transformers, () => []);
-    });
-    const analyzingFileEmitter: FileEmitter = async (file) => {
-      const innerFileEmitter = await pendingAnalysis;
-
-      return innerFileEmitter(file);
-    };
-
-    if (this.watchMode) {
-      this.ngtscNextProgram = angularProgram;
-    }
-
     return {
-      fileEmitter: analyzingFileEmitter,
+      fileEmitter: this.createFileEmitter(builder, transformers, () => []),
       builder,
       internalFiles: undefined,
     };
@@ -633,7 +599,7 @@ export class AngularWebpackPlugin {
       }
 
       const dependencies = [
-        ...program.getAllDependencies(sourceFile),
+        ...(this.fileDependencies.get(filePath) || []),
         ...getExtraDependencies(sourceFile),
       ].map(externalizePath);
 

@@ -81,6 +81,15 @@ export async function browserBuild(
   const output = (await run.result) as BrowserBuilderOutput;
   expect(output.success).toBe(true);
 
+  if (!output.success) {
+    await run.stop();
+
+    return {
+      output,
+      files: {},
+    };
+  }
+
   expect(output.outputPaths[0]).not.toBeUndefined();
   const outputPath = normalize(output.outputPaths[0]);
 
@@ -147,7 +156,7 @@ export const lazyModuleFiles: { [path: string]: string } = {
   `,
 };
 
-export const lazyModuleStringImport: { [path: string]: string } = {
+export const lazyModuleFnImport: { [path: string]: string } = {
   'src/app/app.module.ts': `
     import { BrowserModule } from '@angular/platform-browser';
     import { NgModule } from '@angular/core';
@@ -162,19 +171,12 @@ export const lazyModuleStringImport: { [path: string]: string } = {
       imports: [
         BrowserModule,
         RouterModule.forRoot([
-          { path: 'lazy', loadChildren: './lazy/lazy.module#LazyModule' }
+          { path: 'lazy', loadChildren: () => import('./lazy/lazy.module').then(m => m.LazyModule) }
         ])
       ],
       providers: [],
       bootstrap: [AppComponent]
     })
     export class AppModule { }
-  `,
-};
-
-export const lazyModuleFnImport: { [path: string]: string } = {
-  'src/app/app.module.ts': lazyModuleStringImport['src/app/app.module.ts'].replace(
-    `loadChildren: './lazy/lazy.module#LazyModule'`,
-    `loadChildren: () => import('./lazy/lazy.module').then(m => m.LazyModule)`,
-  ),
+`,
 };
