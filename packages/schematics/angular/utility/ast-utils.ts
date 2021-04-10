@@ -5,6 +5,7 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+import { tags } from '@angular-devkit/core';
 import * as ts from '../third_party/github.com/Microsoft/TypeScript/lib/typescript';
 import { Change, InsertChange, NoopChange } from './change';
 
@@ -358,10 +359,6 @@ export function addSymbolToNgModuleMetadata(
     metadataField,
   );
 
-  // Get the last node of the array literal.
-  if (!matchingProperties) {
-    return [];
-  }
   if (matchingProperties.length == 0) {
     // We haven't found the field in the metadata declaration. Insert a new field.
     const expr = node as ts.ObjectLiteralExpression;
@@ -369,15 +366,16 @@ export function addSymbolToNgModuleMetadata(
     let toInsert: string;
     if (expr.properties.length == 0) {
       position = expr.getEnd() - 1;
-      toInsert = `  ${metadataField}: [${symbolName}]\n`;
+      toInsert = `\n  ${metadataField}: [\n${tags.indentBy(4)`${symbolName}`}\n  ]\n`;
     } else {
       node = expr.properties[expr.properties.length - 1];
       position = node.getEnd();
       // Get the indentation of the last element, if any.
       const text = node.getFullText(source);
-      const matches = text.match(/^\r?\n\s*/);
-      if (matches && matches.length > 0) {
-        toInsert = `,${matches[0]}${metadataField}: [${symbolName}]`;
+      const matches = text.match(/^(\r?\n)(\s*)/);
+      if (matches) {
+        toInsert = `,${matches[0]}${metadataField}: [${matches[1]}` +
+            `${tags.indentBy(matches[2].length + 2)`${symbolName}`}${matches[0]}]`;
       } else {
         toInsert = `, ${metadataField}: [${symbolName}]`;
       }
@@ -406,17 +404,10 @@ export function addSymbolToNgModuleMetadata(
     node = arrLiteral.elements;
   }
 
-  if (!node) {
-    // tslint:disable-next-line: no-console
-    console.error('No app module found. Please add your new class to your component.');
-
-    return [];
-  }
-
   if (Array.isArray(node)) {
     const nodeArray = node as {} as Array<ts.Node>;
-    const symbolsArray = nodeArray.map(node => node.getText());
-    if (symbolsArray.includes(symbolName)) {
+    const symbolsArray = nodeArray.map(node => tags.oneLine`${node.getText()}`);
+    if (symbolsArray.includes(tags.oneLine`${symbolName}`)) {
       return [];
     }
 
@@ -425,31 +416,16 @@ export function addSymbolToNgModuleMetadata(
 
   let toInsert: string;
   let position = node.getEnd();
-  if (node.kind == ts.SyntaxKind.ObjectLiteralExpression) {
-    // We haven't found the field in the metadata declaration. Insert a new
-    // field.
-    const expr = node as ts.ObjectLiteralExpression;
-    if (expr.properties.length == 0) {
-      position = expr.getEnd() - 1;
-      toInsert = `  ${symbolName}\n`;
-    } else {
-      // Get the indentation of the last element, if any.
-      const text = node.getFullText(source);
-      if (text.match(/^\r?\r?\n/)) {
-        toInsert = `,${text.match(/^\r?\n\s*/)[0]}${symbolName}`;
-      } else {
-        toInsert = `, ${symbolName}`;
-      }
-    }
-  } else if (node.kind == ts.SyntaxKind.ArrayLiteralExpression) {
+  if (node.kind == ts.SyntaxKind.ArrayLiteralExpression) {
     // We found the field but it's empty. Insert it just before the `]`.
     position--;
-    toInsert = `${symbolName}`;
+    toInsert = `\n${tags.indentBy(4)`${symbolName}`}\n  `;
   } else {
     // Get the indentation of the last element, if any.
     const text = node.getFullText(source);
-    if (text.match(/^\r?\n/)) {
-      toInsert = `,${text.match(/^\r?\n(\r?)\s*/)[0]}${symbolName}`;
+    const matches = text.match(/^(\r?\n)(\s*)/);
+    if (matches) {
+      toInsert = `,${matches[1]}${tags.indentBy(matches[2].length)`${symbolName}`}`;
     } else {
       toInsert = `, ${symbolName}`;
     }
@@ -510,19 +486,6 @@ export function addBootstrapToModule(source: ts.SourceFile,
                                      modulePath: string, classifiedName: string,
                                      importPath: string): Change[] {
   return addSymbolToNgModuleMetadata(source, modulePath, 'bootstrap', classifiedName, importPath);
-}
-
-/**
- * Custom function to insert an entryComponent into NgModule. It also imports it.
- * @deprecated - Since version 9.0.0 with Ivy, entryComponents is no longer necessary.
- */
-export function addEntryComponentToModule(source: ts.SourceFile,
-                                          modulePath: string, classifiedName: string,
-                                          importPath: string): Change[] {
-  return addSymbolToNgModuleMetadata(
-    source, modulePath,
-    'entryComponents', classifiedName, importPath,
-  );
 }
 
 /**

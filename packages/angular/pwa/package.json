@@ -2,7 +2,6 @@
   "name": "@angular/pwa",
   "version": "0.0.0",
   "description": "PWA schematics for Angular",
-  "experimental": true,
   "keywords": [
     "blueprints",
     "code generation",
@@ -13,7 +12,6 @@
     "save": false
   },
   "dependencies": {
-    "@angular-devkit/core": "0.0.0",
     "@angular-devkit/schematics": "0.0.0",
     "@schematics/angular": "0.0.0",
     "parse5-html-rewriting-stream": "6.0.1"

@@ -16,7 +16,6 @@ import {
   host,
   lazyModuleFiles,
   lazyModuleFnImport,
-  veEnabled,
 } from '../../test-utils';
 
 // tslint:disable-next-line:no-big-function
@@ -59,7 +58,7 @@ describe('Browser Builder lazy modules', () => {
       host.writeMultipleFiles(lazyModuleFnImport);
 
       const { files } = await browserBuild(architect, host, target);
-      expect('lazy-lazy-module.js' in files).toBe(true);
+      expect('src_app_lazy_lazy_module_ts.js' in files).toBe(true);
     });
 
     it('supports lazy bundle for lazy routes with AOT', async () => {
@@ -68,13 +67,9 @@ describe('Browser Builder lazy modules', () => {
       addLazyLoadedModulesInTsConfig(host, lazyModuleFiles);
 
       const { files } = await browserBuild(architect, host, target, { aot: true });
-      if (!veEnabled) {
-        const data = await files['lazy-lazy-module.js'];
-        expect(data).not.toBeUndefined('Lazy module output bundle does not exist');
-        expect(data).toContain('LazyModule.ɵmod');
-      } else {
-        expect(files['lazy-lazy-module-ngfactory.js']).not.toBeUndefined();
-      }
+      const data = await files['src_app_lazy_lazy_module_ts.js'];
+      expect(data).not.toBeUndefined('Lazy module output bundle does not exist');
+      expect(data).toContain('LazyModule.ɵmod');
     });
   });
 
@@ -133,7 +128,7 @@ describe('Browser Builder lazy modules', () => {
     });
 
     const { files } = await browserBuild(architect, host, target);
-    expect(files['lazy-module.js']).not.toBeUndefined();
+    expect(files['src_lazy-module_ts.js']).not.toBeUndefined();
   });
 
   it(`supports lazy bundle for dynamic import() calls`, async () => {
@@ -144,19 +139,11 @@ describe('Browser Builder lazy modules', () => {
         import(/*webpackChunkName: '[request]'*/'./lazy-' + lazyFileName);
       `,
     });
-
-    const { files } = await browserBuild(architect, host, target);
-    expect(files['lazy-module.js']).not.toBeUndefined();
-  });
-
-  it(`supports lazy bundle for System.import() calls`, async () => {
-    const lazyfiles = {
-      'src/lazy-module.ts': 'export const value = 42;',
-      'src/main.ts': `declare var System: any; System.import('./lazy-module');`,
-    };
-
-    host.writeMultipleFiles(lazyfiles);
-    addLazyLoadedModulesInTsConfig(host, lazyfiles);
+    host.replaceInFile(
+      'src/tsconfig.app.json',
+      '"main.ts"',
+      `"main.ts","lazy-module.ts"`,
+    );
 
     const { files } = await browserBuild(architect, host, target);
     expect(files['lazy-module.js']).not.toBeUndefined();
@@ -170,10 +157,9 @@ describe('Browser Builder lazy modules', () => {
     });
 
     const { files } = await browserBuild(architect, host, target);
-    expect(files['one.js']).not.toBeUndefined();
-    expect(files['two.js']).not.toBeUndefined();
-    // TODO: the chunk with common modules used to be called `common`, see why that changed.
-    expect(files['default~one~two.js']).not.toBeUndefined();
+    expect(files['src_one_ts.js']).not.toBeUndefined();
+    expect(files['src_two_ts.js']).not.toBeUndefined();
+    expect(files['default-node_modules_angular_common___ivy_ngcc___fesm2015_http_js.js']).toBeDefined();
   });
 
   it(`supports disabling the common bundle`, async () => {
@@ -184,8 +170,8 @@ describe('Browser Builder lazy modules', () => {
     });
 
     const { files } = await browserBuild(architect, host, target, { commonChunk: false });
-    expect(files['one.js']).not.toBeUndefined();
-    expect(files['two.js']).not.toBeUndefined();
-    expect(files['common.js']).toBeUndefined();
+    expect(files['src_one_ts.js']).not.toBeUndefined();
+    expect(files['src_two_ts.js']).not.toBeUndefined();
+    expect(files['default-node_modules_angular_common___ivy_ngcc___fesm2015_http_js.js']).toBeUndefined();
   });
 });

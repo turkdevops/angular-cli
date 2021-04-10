@@ -79,10 +79,6 @@ e.g.
 $ devkit-admin release minor-beta --force
 ```
 
-## serialize
-
-Serialize JSON Schema into `.d.ts` files. This script is deprecated and doesn't work anymore.
-
 ## snapshots
 
 Create and upload snapshots. This is used in CI.
@@ -94,25 +90,9 @@ Flags:
   required.
 * `--githubTokenFile=<path>`. Reads the githubToken from a file instead of the command line (for CI).
 
-## special-thanks
-
-Calculates and output the list of special thanks.
-
-Flags:
-
-* `--sha=<git ref>`. The SHA to start the special thanks from. Calculates them from this sha to the HEAD.
-
 ## templates
 
 Compile and outputs the templates. For now, only README is being built and outputted.
-
-## bazel:test
-
-Run API and unit tests using Bazel.
-
-## bazel:integration
-
-Run integration tests using Bazel.
 
 ## validate
 

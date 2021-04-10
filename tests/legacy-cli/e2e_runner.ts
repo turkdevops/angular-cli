@@ -41,7 +41,7 @@ Error.stackTraceLimit = Infinity;
  * If unnamed flags are passed in, the list of tests will be filtered to include only those passed.
  */
 const argv = minimist(process.argv.slice(2), {
-  boolean: ['debug', 'ng-snapshots', 'noglobal', 'nosilent', 'noproject', 'verbose', 've'],
+  boolean: ['debug', 'ng-snapshots', 'noglobal', 'nosilent', 'noproject', 'verbose'],
   string: ['devkit', 'glob', 'ignore', 'reuse', 'ng-tag', 'tmpdir', 'ng-version'],
 });
 
@@ -77,33 +77,13 @@ const allSetups = glob
   .sync(path.join(e2eRoot, 'setup/**/*.ts'), { nodir: true })
   .map(name => path.relative(e2eRoot, name))
   .sort();
-let allTests = glob
+const allTests = glob
   .sync(path.join(e2eRoot, testGlob), { nodir: true, ignore: argv.ignore })
   .map(name => path.relative(e2eRoot, name))
   // Replace windows slashes.
   .map(name => name.replace(/\\/g, '/'))
-  .sort();
-
-// TODO: either update or remove these tests.
-allTests = allTests
-  // IS this test still valid? \/
-  .filter(name => !name.endsWith('/module-id.ts'))
-  // Do we want to support this?
-  .filter(name => !name.endsWith('different-file-format.ts'))
-  // Not sure what this test is meant to test, but with depedency changes it is not valid anymore.
-  .filter(name => !name.endsWith('loaders-resolution.ts'))
-  // NEW COMMAND
-  .filter(name => !name.includes('tests/commands/new/'))
-  // NEEDS devkit change
-  .filter(name => !name.endsWith('/existing-directory.ts'))
-  // Disabled on rc.0 due to needed sync with devkit for changes.
-  .filter(name => !name.endsWith('/service-worker.ts'));
-
-if (argv.ve) {
-  // Remove Ivy specific tests
-  allTests = allTests
-    .filter(name => !name.includes('tests/i18n/ivy-localize-'));
-}
+  .sort()
+  .filter(name => !name.endsWith('/setup.ts'));
 
 const shardId = 'shard' in argv ? argv['shard'] : null;
 const nbShards = (shardId === null ? 1 : argv['nb-shards']) || 2;

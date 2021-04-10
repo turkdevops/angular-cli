@@ -157,25 +157,11 @@ export class NgBuildAnalyticsPlugin {
       this._stats.numberOfNgOnInit += countOccurrences(module._source.source(), 'ngOnInit', true);
 
       // Count the number of `Component({` strings (case sensitive), which happens in __decorate().
-      // This does not include View Engine AOT compilation, we use the ngfactory for it.
       this._stats.numberOfComponents += countOccurrences(module._source.source(), 'Component({');
       // For Ivy we just count ɵcmp.
       this._stats.numberOfComponents += countOccurrences(module._source.source(), '.ɵcmp', true);
       // for ascii_only true
       this._stats.numberOfComponents += countOccurrences(module._source.source(), '.\u0275cmp', true);
-    }
-  }
-
-  protected _checkNgFactoryNormalModule(module: NormalModule) {
-    if (module._source) {
-      // PLEASE REMEMBER:
-      // We're dealing with ES5 _or_ ES2015 JavaScript at this point (we don't know for sure).
-
-      // Count the number of `.ɵccf(` strings (case sensitive). They're calls to components
-      // factories.
-      this._stats.numberOfComponents += countOccurrences(module._source.source(), '.ɵccf(');
-      // for ascii_only true
-      this._stats.numberOfComponents += countOccurrences(module._source.source(), '.\u0275ccf(');
     }
   }
 
@@ -197,45 +183,42 @@ export class NgBuildAnalyticsPlugin {
   }
 
   protected _collectBundleStats(compilation: compilation.Compilation) {
-    // `compilation.chunks` is a Set in Webpack 5
-    const chunks = Array.from(compilation.chunks);
+    const chunkAssets = new Set<string>();
+    for (const chunk of compilation.chunks) {
+      if (!chunk.rendered) {
+        continue;
+      }
 
-    chunks
-      .filter((chunk: { rendered?: boolean }) => chunk.rendered)
-      .forEach((chunk: { files: string[]; canBeInitial(): boolean }) => {
-        const asset = compilation.assets[chunk.files[0]];
-        const size = asset ? asset.size() : 0;
+      const firstFile = Array.from(chunk.files)[0];
+      const size = compilation.getAsset(firstFile)?.source.size() ?? 0;
+      chunkAssets.add(firstFile);
 
-        if (chunk.canBeInitial()) {
-          this._stats.initialChunkSize += size;
-        } else {
-          this._stats.lazyChunkCount++;
-          this._stats.lazyChunkSize += size;
-        }
-        this._stats.totalChunkCount++;
-        this._stats.totalChunkSize += size;
-      });
+      if (chunk.canBeInitial()) {
+        this._stats.initialChunkSize += size;
+      } else {
+        this._stats.lazyChunkCount++;
+        this._stats.lazyChunkSize += size;
+      }
 
-    Object.entries<{ size(): number }>(compilation.assets)
-      // Filter out chunks. We only count assets that are not JS.
-      .filter(([name]) => {
-        return chunks.every((chunk: { files: string[] }) => chunk.files[0] != name);
-      })
-      .forEach(([, asset]) => {
-        this._stats.assetSize += asset.size();
-        this._stats.assetCount++;
-      });
+      this._stats.totalChunkCount++;
+      this._stats.totalChunkSize += size;
 
-    for (const [name, asset] of Object.entries<{ size(): number }>(compilation.assets)) {
-      if (name == 'polyfill') {
-        this._stats.polyfillSize += asset.size();
+      if (firstFile.endsWith('.css')) {
+        this._stats.cssSize += size;
       }
     }
-    for (const chunk of compilation.chunks) {
-      if (chunk.files[0] && chunk.files[0].endsWith('.css')) {
-        const asset = compilation.assets[chunk.files[0]];
-        const size = asset ? asset.size() : 0;
-        this._stats.cssSize += size;
+
+    for (const asset of compilation.getAssets()) {
+      // Only count non-JavaScript related files
+      if (chunkAssets.has(asset.name)) {
+        continue;
+      }
+
+      this._stats.assetSize += asset.source.size();
+      this._stats.assetCount++;
+
+      if (asset.name == 'polyfill') {
+        this._stats.polyfillSize += asset.source.size();
       }
     }
   }
@@ -267,8 +250,6 @@ export class NgBuildAnalyticsPlugin {
     // Check that it's a source file from the project.
     if (module.resource.endsWith('.ts')) {
       this._checkTsNormalModule(module);
-    } else if (module.resource.endsWith('.ngfactory.js')) {
-      this._checkNgFactoryNormalModule(module);
     }
   }
 

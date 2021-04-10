@@ -67,6 +67,7 @@ import {
   BundleStats,
   ChunkType,
   JsonChunkStats,
+  JsonCompilationStats,
   generateBundleStats,
   statsErrorsToString,
   statsHasErrors,
@@ -250,11 +251,11 @@ export function buildWebpackBrowser(
             spinner.enabled = options.progress !== false;
 
             const {
-              webpackStats: webpackRawStats,
               success,
               emittedFiles = [],
               outputPath: webpackOutputPath,
             } = buildEvent;
+            const webpackRawStats = buildEvent.webpackStats as JsonCompilationStats;
             if (!webpackRawStats) {
               throw new Error('Webpack stats build result is required.');
             }
@@ -608,10 +609,10 @@ export function buildWebpackBrowser(
                 for (const { severity, message } of budgetFailures) {
                   switch (severity) {
                     case ThresholdSeverity.Warning:
-                      webpackStats.warnings.push(message);
+                      webpackStats.warnings?.push({message});
                       break;
                     case ThresholdSeverity.Error:
-                      webpackStats.errors.push(message);
+                      webpackStats.errors?.push({message});
                       break;
                     default:
                       assertNever(severity);
@@ -668,7 +669,7 @@ export function buildWebpackBrowser(
                       const { content, warnings, errors } = await indexHtmlGenerator.process({
                         baseHref: getLocaleBaseHref(i18n, locale) || options.baseHref,
                         // i18nLocale is used when Ivy is disabled
-                        lang: locale || options.i18nLocale,
+                        lang: locale || undefined,
                         outputPath,
                         files: mapEmittedFilesToFileInfo(files),
                         noModuleFiles: mapEmittedFilesToFileInfo(noModuleFiles),

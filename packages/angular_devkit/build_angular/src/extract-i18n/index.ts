@@ -96,13 +96,8 @@ async function getSerializer(format: Format, sourceLocale: string, basePath: str
   }
 }
 
-function normalizeFormatOption(options: ExtractI18nBuilderOptions) {
-  let format;
-  if (options.i18nFormat !== Format.Xlf) {
-    format = options.i18nFormat;
-  } else {
-    format = options.format;
-  }
+function normalizeFormatOption(options: ExtractI18nBuilderOptions): Format {
+  let format = options.format;
 
   switch (format) {
     case Format.Xlf:
@@ -114,21 +109,10 @@ function normalizeFormatOption(options: ExtractI18nBuilderOptions) {
     case Format.Xliff2:
       format = Format.Xlf2;
       break;
-    case Format.Json:
-      format = Format.Json;
-      break;
-    case Format.Arb:
-      format = Format.Arb;
-      break;
-    case Format.LegacyMigrate:
-      format = Format.LegacyMigrate;
-      break;
-    case undefined:
-      format = Format.Xlf;
-      break;
   }
 
-  return format;
+  // Default format is xliff1
+  return format ?? Format.Xlf;
 }
 
 class NoEmitPlugin {
@@ -170,7 +154,6 @@ export async function execute(
   const metadata = await context.getProjectMetadata(context.target);
   const i18n = createI18nOptions(metadata);
 
-  let usingIvy = false;
   let useLegacyIds = true;
 
   const ivyMessages: LocalizeMessage[] = [];
@@ -184,9 +167,6 @@ export async function execute(
         vendor: true,
       },
       buildOptimizer: false,
-      i18nLocale: options.i18nLocale || i18n.sourceLocale,
-      i18nFormat: format,
-      i18nFile: outFile,
       aot: true,
       progress: options.progress,
       assets: [],
@@ -198,52 +178,37 @@ export async function execute(
     },
     context,
     (wco) => {
-      const isIvyApplication = wco.tsConfig.options.enableIvy !== false;
+      if (wco.tsConfig.options.enableIvy === false) {
+        context.logger.warn(
+          'Ivy extraction enabled but application is not Ivy enabled. Extraction may fail.',
+        );
+      }
 
       // Default value for legacy message ids is currently true
       useLegacyIds = wco.tsConfig.options.enableI18nLegacyMessageIdFormat ?? true;
-
-      // Ivy extraction is the default for Ivy applications.
-      usingIvy = (isIvyApplication && options.ivy === undefined) || !!options.ivy;
-
-      if (usingIvy) {
-        if (!isIvyApplication) {
-          context.logger.warn(
-            'Ivy extraction enabled but application is not Ivy enabled. Extraction may fail.',
-          );
-        }
-      } else if (isIvyApplication) {
-        context.logger.warn(
-          'Ivy extraction not enabled but application is Ivy enabled. ' +
-          'If the extraction fails, the `--ivy` flag will enable Ivy extraction.',
-        );
-      }
 
       const partials = [
         { plugins: [new NoEmitPlugin()] },
         getCommonConfig(wco),
         getBrowserConfig(wco),
-        // Only use VE extraction if not using Ivy
-        getAotConfig(wco, !usingIvy),
+        getAotConfig(wco),
         getStatsConfig(wco),
       ];
 
       // Add Ivy application file extractor support
-      if (usingIvy) {
-        partials.unshift({
-          module: {
-            rules: [
-              {
-                test: /\.[t|j]s$/,
-                loader: require.resolve('./ivy-extract-loader'),
-                options: {
-                  messageHandler: (messages: LocalizeMessage[]) => ivyMessages.push(...messages),
-                },
+      partials.unshift({
+        module: {
+          rules: [
+            {
+              test: /\.[t|j]s$/,
+              loader: require.resolve('./ivy-extract-loader'),
+              options: {
+                messageHandler: (messages: LocalizeMessage[]) => ivyMessages.push(...messages),
               },
-            ],
-          },
-        });
-      }
+            },
+          ],
+        },
+      });
 
       // Replace all stylesheets with an empty default export
       partials.push({
@@ -259,16 +224,14 @@ export async function execute(
     },
   );
 
-  if (usingIvy) {
-    try {
-      require.resolve('@angular/localize');
-    } catch {
-      return {
-        success: false,
-        error: `Ivy extraction requires the '@angular/localize' package.`,
-        outputPath: outFile,
-       };
-    }
+  try {
+    require.resolve('@angular/localize');
+  } catch {
+    return {
+      success: false,
+      error: `Ivy extraction requires the '@angular/localize' package.`,
+      outputPath: outFile,
+    };
   }
 
   const webpackResult = await runWebpack(
@@ -283,8 +246,8 @@ export async function execute(
   // Set the outputPath to the extraction output location for downstream consumers
   webpackResult.outputPath = outFile;
 
-  // Complete if using VE or if Webpack build failed
-  if (!usingIvy || !webpackResult.success) {
+  // Complete if Webpack build failed
+  if (!webpackResult.success) {
     return webpackResult;
   }
 

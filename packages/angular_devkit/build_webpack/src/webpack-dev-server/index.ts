@@ -6,7 +6,6 @@
  * found in the LICENSE file at https://angular.io/license
  */
 import { BuilderContext, createBuilder } from '@angular-devkit/architect';
-import { json } from '@angular-devkit/core';
 import * as net from 'net';
 import { resolve as pathResolve } from 'path';
 import { Observable, from, isObservable, of } from 'rxjs';
@@ -53,16 +52,21 @@ export function runWebpackDevServer(
     config: WebpackDevServer.Configuration,
   ) => {
     if (options.webpackDevServerFactory) {
-      return new options.webpackDevServerFactory(webpack, config);
+      // webpack-dev-server types currently do not support Webpack 5
+      // tslint:disable-next-line: no-any
+      return new options.webpackDevServerFactory(webpack as any, config);
     }
 
-    return new WebpackDevServer(webpack, config);
+    // webpack-dev-server types currently do not support Webpack 5
+    // tslint:disable-next-line: no-any
+    return new WebpackDevServer(webpack as any, config);
   };
 
   const log: WebpackLoggingCallback = options.logging
     || ((stats, config) => context.logger.info(stats.toString(config.stats)));
 
-  const devServerConfig = options.devServerConfig || config.devServer || {};
+  // tslint:disable-next-line: no-any
+  const devServerConfig = options.devServerConfig || (config as any).devServer || {};
   if (devServerConfig.stats) {
     config.stats = devServerConfig.stats;
   }
@@ -111,18 +115,21 @@ export function runWebpackDevServer(
       );
 
       // Teardown logic. Close the server when unsubscribed from.
-      return () => server.close();
+      return (() => {
+        server.close();
+        webpackCompiler.close?.(() => {});
+      });
     })),
   );
 }
 
 
-export default createBuilder<
-  json.JsonObject & WebpackDevServerBuilderSchema, DevServerBuildOutput
->((options, context) => {
-  const configPath = pathResolve(context.workspaceRoot, options.webpackConfig);
+export default createBuilder<WebpackDevServerBuilderSchema, DevServerBuildOutput>(
+  (options, context) => {
+    const configPath = pathResolve(context.workspaceRoot, options.webpackConfig);
 
-  return from(import(configPath)).pipe(
-    switchMap((config: webpack.Configuration) => runWebpackDevServer(config, context)),
-  );
-});
+    return from(import(configPath)).pipe(
+      switchMap((config: webpack.Configuration) => runWebpackDevServer(config, context)),
+    );
+  },
+);
