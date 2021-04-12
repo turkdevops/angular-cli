@@ -18,11 +18,11 @@ export interface EmittedFiles {
   extension: string;
 }
 
-export function getEmittedFiles(compilation: webpack.compilation.Compilation): EmittedFiles[] {
+export function getEmittedFiles(compilation: webpack.Compilation): EmittedFiles[] {
   const files: EmittedFiles[] = [];
 
   // adds all chunks to the list of emitted files such as lazy loaded modules
-  for (const chunk of compilation.chunks as Iterable<webpack.compilation.Chunk>) {
+  for (const chunk of compilation.chunks as Iterable<webpack.Chunk>) {
     for (const file of chunk.files) {
       files.push({
         // The id is guaranteed to exist at this point in the compilation process

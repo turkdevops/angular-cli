@@ -5,21 +5,18 @@
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-// tslint:disable
-// TODO: cleanup this file, it's copied as is from Angular CLI.
 
-import { Compiler, loader } from 'webpack';
-import { CachedSource, ConcatSource, OriginalSource, RawSource, Source } from 'webpack-sources';
 import { interpolateName } from 'loader-utils';
 import * as path from 'path';
-import { isWebpackFiveOrHigher } from '../../utils/webpack-version';
+import { Compilation, Compiler } from 'webpack';
+import { CachedSource, ConcatSource, OriginalSource, RawSource, Source } from 'webpack-sources';
 
 const Chunk = require('webpack/lib/Chunk');
 const EntryPoint = require('webpack/lib/Entrypoint');
 
 export interface ScriptsWebpackPluginOptions {
   name: string;
-  sourceMap: boolean;
+  sourceMap?: boolean;
   scripts: string[];
   filename: string;
   basePath: string;
@@ -30,7 +27,7 @@ interface ScriptOutput {
   source: CachedSource;
 }
 
-function addDependencies(compilation: any, scripts: string[]): void {
+function addDependencies(compilation: Compilation, scripts: string[]): void {
   for (const script of scripts) {
     compilation.fileDependencies.add(script);
   }
@@ -39,31 +36,32 @@ export class ScriptsWebpackPlugin {
   private _lastBuildTime?: number;
   private _cachedOutput?: ScriptOutput;
 
-  constructor(private options: Partial<ScriptsWebpackPluginOptions> = {}) { }
+  constructor(private options: ScriptsWebpackPluginOptions) { }
 
-  async shouldSkip(compilation: any, scripts: string[]): Promise<boolean> {
+  // tslint:disable-next-line: no-any
+  async shouldSkip(compilation: Compilation, scripts: string[]): Promise<boolean> {
     if (this._lastBuildTime == undefined) {
       this._lastBuildTime = Date.now();
+
       return false;
     }
 
     for (const script of scripts) {
-      const scriptTime = isWebpackFiveOrHigher()
-        ? await new Promise<number | undefined>((resolve, reject) => {
-          compilation.fileSystemInfo.getFileTimestamp(script, (error: unknown, entry: any) => {
-            if (error) {
-              reject(error);
+      const scriptTime = await new Promise<number | undefined>((resolve, reject) => {
+        compilation.fileSystemInfo.getFileTimestamp(script, (error, entry) => {
+          if (error) {
+            reject(error);
 
-              return;
-            }
+            return;
+          }
 
-            resolve(typeof entry !== 'string' ? entry.safeTime : undefined)
-          })
-        })
-        : compilation.fileTimestamps.get(script);
+          resolve((entry && typeof entry !== 'string') ? entry.safeTime : undefined);
+        });
+      });
 
       if (!scriptTime || scriptTime > this._lastBuildTime) {
         this._lastBuildTime = Date.now();
+
         return false;
       }
     }
@@ -71,28 +69,21 @@ export class ScriptsWebpackPlugin {
     return true;
   }
 
-  private _insertOutput(compilation: any, { filename, source }: ScriptOutput, cached = false) {
+  private _insertOutput(compilation: Compilation, { filename, source }: ScriptOutput, cached = false) {
     const chunk = new Chunk(this.options.name);
     chunk.rendered = !cached;
     chunk.id = this.options.name;
     chunk.ids = [chunk.id];
-    if (isWebpackFiveOrHigher()) {
-      chunk.files.add(filename);
-    } else {
-      chunk.files.push(filename);
-    }
+    chunk.files.add(filename);
 
     const entrypoint = new EntryPoint(this.options.name);
     entrypoint.pushChunk(chunk);
     chunk.addGroup(entrypoint);
     compilation.entrypoints.set(this.options.name, entrypoint);
-    if (isWebpackFiveOrHigher()) {
-      compilation.chunks.add(chunk);
-    } else {
-      compilation.chunks.push(chunk);
-    }
+    compilation.chunks.add(chunk);
 
-    compilation.assets[filename] = source;
+    // tslint:disable-next-line: no-any
+    compilation.assets[filename] = source as any;
     compilation.hooks.chunkAsset.call(chunk, filename);
   }
 
@@ -122,6 +113,7 @@ export class ScriptsWebpackPlugin {
               compilation.inputFileSystem.readFile(fullPath, (err?: Error, data?: string | Buffer) => {
                 if (err) {
                   reject(err);
+
                   return;
                 }
 
@@ -154,7 +146,7 @@ export class ScriptsWebpackPlugin {
 
           const combinedSource = new CachedSource(concatSource);
           const filename = interpolateName(
-            { resourcePath: 'scripts.js' } as loader.LoaderContext,
+            { resourcePath: 'scripts.js' },
             this.options.filename as string,
             { content: combinedSource.source() },
           );
