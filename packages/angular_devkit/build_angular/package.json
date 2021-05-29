@@ -33,7 +33,7 @@
     "css-loader": "5.2.1",
     "cssnano": "4.1.11",
     "find-cache-dir": "3.3.1",
-    "glob": "7.1.6",
+    "glob": "7.1.7",
     "https-proxy-agent": "5.0.0",
     "inquirer": "8.0.0",
     "jest-worker": "26.6.2",
