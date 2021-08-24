@@ -1,2 +1,2 @@
-FROM node:10.12
+FROM node:10.24.1
 ENTRYPOINT [ "sh" ]
